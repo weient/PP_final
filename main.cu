@@ -38,10 +38,12 @@ int main(int argc, char* argv[]) {
     }
     // ./filter input.png output.png dilate 2
     else if(strcmp(filter_type, "dilate") == 0 && argc == 5) {
+        dilationCUDA(src, dst, atoi(argv[4]));
         dilationCUDAoptimize(src, dst, atoi(argv[4]));
     }
     // ./filter input.png output.png oil 3
     else if(strcmp(filter_type, "oil") == 0 && argc == 5) {
+        oilPaintingCUDA(src, dst, atoi(argv[4]), 20);
         oilPaintingCUDAoptimize(src, dst, atoi(argv[4]), 20);
     }
     // ./filter input.png output.png wave 10 10 0.1
