@@ -6,8 +6,6 @@
 #define BLOCK_DIM_Y 32
 #define CHANNELS 3
 
-
-
 void gaussianBlurCUDA(Image* src, Image* dst, int radius, float sigma) {
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
@@ -77,6 +75,107 @@ void gaussianBlurCUDA(Image* src, Image* dst, int radius, float sigma) {
     cudaEventDestroy(stop);
 }
 
+void embossCUDAoptimize(Image* src, Image* dst, float intensity) {
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+    
+    unsigned char *d_src, *d_dst;
+    size_t size = src->width * src->height * src->channels * sizeof(unsigned char);
+    
+    cudaMalloc(&d_src, size);
+    cudaMalloc(&d_dst, size);
+    cudaMemcpy(d_src, src->data, size, cudaMemcpyHostToDevice);
+    
+    // Calculate shared memory size
+    const int radius = 1;
+    const int tile_w = BLOCK_DIM_X + 2 * radius;
+    const int tile_h = BLOCK_DIM_Y + 2 * radius;
+    const size_t smem_size = tile_w * tile_h * src->channels * sizeof(unsigned char);
+    
+    // Check shared memory size against device limits
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    if (smem_size > prop.sharedMemPerBlock) {
+        printf("Error: Required shared memory (%lu bytes) exceeds device limit (%lu bytes)\n", 
+               smem_size, prop.sharedMemPerBlock);
+        return;
+    }
+    
+    // Set up grid and block dimensions
+    dim3 block(BLOCK_DIM_X, BLOCK_DIM_Y);
+    dim3 grid(
+        (src->width + BLOCK_DIM_X - 1) / BLOCK_DIM_X,
+        (src->height + BLOCK_DIM_Y - 1) / BLOCK_DIM_Y
+    );
+    
+    // Launch kernel with dynamic shared memory size
+    embossKernelOptimized<<<grid, block, smem_size>>>(
+        d_src,
+        d_dst,
+        src->width,
+        src->height,
+        src->channels,
+        intensity
+    );
+    
+    cudaMemcpy(dst->data, d_dst, size, cudaMemcpyDeviceToHost);
+    
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    printf("GPU time: %.4f seconds\n", milliseconds/1000.0f);
+    
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(d_src);
+    cudaFree(d_dst);
+}
+
+// void embossCUDAoptimize(Image* src, Image* dst, float intensity) {
+//     cudaEvent_t start, stop;
+//     cudaEventCreate(&start);
+//     cudaEventCreate(&stop);
+//     cudaEventRecord(start);
+    
+//     unsigned char *d_src, *d_dst;
+//     size_t size = src->width * src->height * src->channels * sizeof(unsigned char);
+    
+//     cudaMalloc(&d_src, size);
+//     cudaMalloc(&d_dst, size);
+//     cudaMemcpy(d_src, src->data, size, cudaMemcpyHostToDevice);
+    
+//     int total_elements = src->width * src->height * src->channels;
+//     int block_size = 1024;
+//     int num_blocks = (total_elements + block_size - 1) / block_size;
+    
+//     embossKernelOptimized<<<num_blocks, block_size>>>(
+//         d_src,
+//         d_dst,
+//         src->width,
+//         src->height,
+//         src->channels,
+//         intensity
+//     );
+    
+//     cudaMemcpy(dst->data, d_dst, size, cudaMemcpyDeviceToHost);
+    
+//     cudaEventRecord(stop);
+//     cudaEventSynchronize(stop);
+    
+//     float milliseconds = 0;
+//     cudaEventElapsedTime(&milliseconds, start, stop);
+//     printf("GPU time: %.4f seconds\n", milliseconds/1000.0f);
+    
+//     cudaFree(d_src);
+//     cudaFree(d_dst);
+//     cudaEventDestroy(start);
+//     cudaEventDestroy(stop);
+// }
+
 void embossCUDA(Image* src, Image* dst, float intensity) {
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
@@ -122,7 +221,6 @@ void erosionCUDAoptimize(Image* src, Image* dst, int radius) {
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
-    
     cudaEventRecord(start);
     
     unsigned char *d_src, *d_dst;
