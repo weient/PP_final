@@ -1,6 +1,5 @@
 Copy# Ignore all PNG files
-*.png
-*.o
+output.png
 
 # Ignore specific binary file without extension
 filter
