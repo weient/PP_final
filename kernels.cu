@@ -5,7 +5,6 @@
 #define BLOCK_DIM_Y 32
 #define CHANNELS 3
 
-
 __global__ void gaussianKernel(
     unsigned char* src,
     unsigned char* dst,
@@ -43,6 +42,96 @@ __global__ void gaussianKernel(
     dst[idx] = (unsigned char)(sum + 0.5f);
 }
 
+__global__ void gaussianKernelOptimized(
+    unsigned char* src,
+    unsigned char* dst,
+    int width,
+    int height,
+    int channels,
+    int radius,
+    float* kernel
+) {
+    extern __shared__ unsigned char shared_mem[];
+    
+    // Calculate tile dimensions
+    const int tile_w = BLOCK_DIM_X + 2 * radius;
+    const int tile_h = BLOCK_DIM_Y + 2 * radius;
+    const int kernelSize = 2 * radius + 1;
+    
+    // Thread indices
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+    const int bx = blockIdx.x * BLOCK_DIM_X;
+    const int by = blockIdx.y * BLOCK_DIM_Y;
+    const int x = bx + tx;
+    const int y = by + ty;
+    
+    // Calculate shared memory layout
+    const int kernel_size = kernelSize * kernelSize;
+    float* shared_kernel = (float*)shared_mem;
+    unsigned char* shared_image = (unsigned char*)&shared_kernel[kernel_size];
+    
+    // Cooperatively load kernel into shared memory
+    for(int i = threadIdx.y * BLOCK_DIM_X + threadIdx.x; 
+        i < kernel_size; 
+        i += BLOCK_DIM_X * BLOCK_DIM_Y) {
+        if(i < kernel_size) {
+            shared_kernel[i] = kernel[i];
+        }
+    }
+    
+    __syncthreads();
+    
+    // Load image data into shared memory
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char* smem_c = &shared_image[c * tile_w * tile_h];
+        
+        for (int dy = ty; dy < tile_h; dy += BLOCK_DIM_Y) {
+            for (int dx = tx; dx < tile_w; dx += BLOCK_DIM_X) {
+                int gy = by + dy - radius;
+                int gx = bx + dx - radius;
+                
+                // Clamp coordinates to image boundaries
+                gy = max(0, min(gy, height - 1));
+                gx = max(0, min(gx, width - 1));
+                
+                smem_c[dy * tile_w + dx] = src[(gy * width + gx) * channels + c];
+            }
+        }
+    }
+    
+    __syncthreads();
+    
+    // Check if this thread processes a valid pixel
+    if (x >= width || y >= height) return;
+    
+    // Process each channel
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char* smem_c = &shared_image[c * tile_w * tile_h];
+        float sum = 0.0f;
+        int ki = 0;
+        
+        // Apply Gaussian filter using shared memory
+        #pragma unroll
+        for (int ky = 0; ky < kernelSize; ky++) {
+            #pragma unroll
+            for (int kx = 0; kx < kernelSize; kx++) {
+                const int sy = ty + ky;
+                const int sx = tx + kx;
+                const float k_val = shared_kernel[ki++];
+                
+                float pixel_value = (float)smem_c[sy * tile_w + sx];
+                sum += pixel_value * k_val;
+            }
+        }
+        
+        // Write result with proper rounding
+        dst[(y * width + x) * channels + c] = (unsigned char)(min(max(sum + 0.5f, 0.0f), 255.0f));
+    }
+}
+
 __global__ void embossKernel(
     unsigned char* src,
     unsigned char* dst,
@@ -54,21 +143,6 @@ __global__ void embossKernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_pixels = width * height * channels;
 
-    __shared__ float sharedKernel[3][3];
-    
-    if (threadIdx.x == 0) {
-        sharedKernel[0][0] = -2.0f * intensity;
-        sharedKernel[0][1] = -1.0f * intensity;
-        sharedKernel[0][2] = 0.0f;
-        sharedKernel[1][0] = -1.0f * intensity;
-        sharedKernel[1][1] = 1.0f;
-        sharedKernel[1][2] = intensity;
-        sharedKernel[2][0] = 0.0f;
-        sharedKernel[2][1] = intensity;
-        sharedKernel[2][2] = 2.0f * intensity;
-    }
-    __syncthreads();
-    
     if (idx >= total_pixels) return;
     
     int c = idx % channels;
@@ -76,23 +150,124 @@ __global__ void embossKernel(
     int x = xy % width;
     int y = xy / width;
     
+    // Skip border pixels
     if(x == 0 || x == width-1 || y == 0 || y == height-1) {
         dst[idx] = src[idx];
         return;
     }
     
+    float side = -2.0f * intensity;
+    float corner = -1.0f * intensity;
+    float center = 1.0f;
+    float opposite = 2.0f * intensity;
     
-    float sum = 128.0f; 
+    float kernel[3][3] = {
+        {side, corner, 0},
+        {corner, center, intensity},
+        {0, intensity, opposite}
+    };
+    
+    float sum = 128.0f; // Add bias to avoid negative values
     
     for(int ky = -1; ky <= 1; ky++) {
         for(int kx = -1; kx <= 1; kx++) {
             int src_idx = ((y + ky) * width + (x + kx)) * channels + c;
-            sum += src[src_idx] * sharedKernel[ky+1][kx+1];
+            sum += src[src_idx] * kernel[ky+1][kx+1];
         }
     }
     
     sum = min(max(sum, 0.0f), 255.0f);
     dst[idx] = (unsigned char)sum;
+}
+
+__global__ void embossKernelOptimized(
+    unsigned char* src,
+    unsigned char* dst,
+    int width,
+    int height,
+    int channels,
+    float intensity
+) {
+    extern __shared__ unsigned char smem[];
+    
+    // Define tile dimensions (similar to erosion filter)
+    const int radius = 1; // Emboss uses 3x3 filter, so radius is 1
+    const int tile_w = BLOCK_DIM_X + 2 * radius;
+    const int tile_h = BLOCK_DIM_Y + 2 * radius;
+    
+    // Thread and block indices
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+    const int bx = blockIdx.x * BLOCK_DIM_X;
+    const int by = blockIdx.y * BLOCK_DIM_Y;
+    const int x = bx + tx;
+    const int y = by + ty;
+    
+    // Load filter coefficients into shared memory
+    __shared__ float filter[3][3];
+    if (tx == 0 && ty == 0) {
+        float side = -2.0f * intensity;
+        float corner = -1.0f * intensity;
+        float center = 1.0f;
+        float opposite = 2.0f * intensity;
+        
+        filter[0][0] = side;
+        filter[0][1] = corner;
+        filter[0][2] = 0.0f;
+        filter[1][0] = corner;
+        filter[1][1] = center;
+        filter[1][2] = intensity;
+        filter[2][0] = 0.0f;
+        filter[2][1] = intensity;
+        filter[2][2] = opposite;
+    }
+    __syncthreads();
+    
+    // Load image data into shared memory
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char* smem_c = &smem[c * tile_w * tile_h];
+        
+        // Collaborative loading of image tile into shared memory
+        for (int dy = ty; dy < tile_h; dy += BLOCK_DIM_Y) {
+            for (int dx = tx; dx < tile_w; dx += BLOCK_DIM_X) {
+                int gy = by + dy - radius;
+                int gx = bx + dx - radius;
+                
+                // Clamp coordinates to image boundaries
+                gy = max(0, min(gy, height - 1));
+                gx = max(0, min(gx, width - 1));
+                
+                smem_c[dy * tile_w + dx] = src[(gy * width + gx) * channels + c];
+            }
+        }
+    }
+    
+    __syncthreads();
+    
+    // Check if this thread processes a valid pixel
+    if (x >= width || y >= height) return;
+    
+    // Process each channel
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char* smem_c = &smem[c * tile_w * tile_h];
+        float sum = 128.0f; // Add bias to avoid negative values
+        
+        // Apply filter using shared memory
+        for (int ky = -radius; ky <= radius; ky++) {
+            for (int kx = -radius; kx <= radius; kx++) {
+                const int sy = (ty + radius + ky);
+                const int sx = (tx + radius + kx);
+                float val = (float)smem_c[sy * tile_w + sx];
+                sum += val * filter[ky + radius][kx + radius];
+            }
+        }
+        
+        // Clamp and write result
+        sum = min(max(sum, 0.0f), 255.0f);
+        dst[(y * width + x) * channels + c] = (unsigned char)sum;
+    }
 }
 
 __global__ void erosionKernel(
@@ -127,6 +302,63 @@ __global__ void erosionKernel(
     
     dst[idx] = min_val;
 }
+
+__global__ void erosionKernelOptimized(
+    unsigned char* src,
+    unsigned char* dst,
+    int width,
+    int height,
+    int channels,
+    int radius
+) {
+    extern __shared__ unsigned char smem[];
+    
+    const int tile_w = BLOCK_DIM_X + 2 * radius;
+    const int tile_h = BLOCK_DIM_Y + 2 * radius;
+    
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+    const int bx = blockIdx.x * BLOCK_DIM_X;
+    const int by = blockIdx.y * BLOCK_DIM_Y;
+    const int x = bx + tx;
+    const int y = by + ty;
+    
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char* smem_c = &smem[c * tile_w * tile_h];
+        
+        for (int dy = ty; dy < tile_h; dy += BLOCK_DIM_Y) {
+            for (int dx = tx; dx < tile_w; dx += BLOCK_DIM_X) {
+                int gy = by + dy - radius;
+                int gx = bx + dx - radius;
+                
+                gy = max(0, min(gy, height - 1));
+                gx = max(0, min(gx, width - 1));
+                
+                smem_c[dy * tile_w + dx] = src[(gy * width + gx) * channels + c];
+            }
+        }
+    }
+    
+    __syncthreads();
+    if (x >= width || y >= height) return;
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char min_val = 255;
+        unsigned char* smem_c = &smem[c * tile_w * tile_h];
+        
+        for (int ky = -radius; ky <= radius; ky++) {
+            for (int kx = -radius; kx <= radius; kx++) {
+                const int sy = (ty + radius + ky);
+                const int sx = (tx + radius + kx);
+                min_val = min(min_val, smem_c[sy * tile_w + sx]);
+            }
+        }
+        
+        dst[(y * width + x) * channels + c] = min_val;
+    }
+}
+
 __global__ void dilationKernelOptimized(
     unsigned char* src,
     unsigned char* dst,
