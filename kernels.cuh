@@ -2,6 +2,7 @@
 #define CUDA_KERNELS_CUH
 #include "image.cuh"
 
+__global__ void gaussianKernelOptimized(unsigned char* src, unsigned char* dst, int width, int height, int channels, int radius, float* kernel);
 __global__ void gaussianKernel(unsigned char* src, unsigned char* dst, int width, int height, int channels, int radius, float sigma, float* kernel);
 
 __global__ void embossKernelOptimized(unsigned char* src, unsigned char* dst,int width, int height, int channels, float intensity);

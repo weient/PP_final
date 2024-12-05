@@ -3,6 +3,7 @@
 #include "image.cuh"
 
 void gaussianBlurCUDA(Image* src, Image* dst, int radius, float sigma);
+void gaussianBlurCUDAoptimize(Image* src, Image* dst, int radius, float sigma);
 
 void embossCUDAoptimize(Image* src, Image* dst, float intensity);
 void embossCUDA(Image* src, Image* dst, float intensity);

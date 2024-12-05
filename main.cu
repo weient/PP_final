@@ -26,7 +26,8 @@ int main(int argc, char* argv[]) {
     
     // ./filter_cuda input.png output.png gaussian 5 3.0
     if(strcmp(filter_type, "gaussian") == 0 && argc == 6) {
-        gaussianBlurCUDA(src, dst, atoi(argv[4]), atof(argv[5]));
+        gaussianBlurCUDAoptimize(src, dst, atoi(argv[4]), atof(argv[5]));
+        // gaussianBlurCUDA(src, dst, atoi(argv[4]), atof(argv[5]));
     }
     // ./filter input.png output.png emboss 1.0
     else if(strcmp(filter_type, "emboss") == 0 && argc == 5) {
