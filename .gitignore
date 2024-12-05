@@ -1,0 +1,6 @@
+Copy# Ignore all PNG files
+*.png
+*.o
+
+# Ignore specific binary file without extension
+filter
