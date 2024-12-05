@@ -127,6 +127,63 @@ __global__ void erosionKernel(
     
     dst[idx] = min_val;
 }
+
+__global__ void erosionKernelOptimized(
+    unsigned char* src,
+    unsigned char* dst,
+    int width,
+    int height,
+    int channels,
+    int radius
+) {
+    extern __shared__ unsigned char smem[];
+    
+    const int tile_w = BLOCK_DIM_X + 2 * radius;
+    const int tile_h = BLOCK_DIM_Y + 2 * radius;
+    
+    const int tx = threadIdx.x;
+    const int ty = threadIdx.y;
+    const int bx = blockIdx.x * BLOCK_DIM_X;
+    const int by = blockIdx.y * BLOCK_DIM_Y;
+    const int x = bx + tx;
+    const int y = by + ty;
+    
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char* smem_c = &smem[c * tile_w * tile_h];
+        
+        for (int dy = ty; dy < tile_h; dy += BLOCK_DIM_Y) {
+            for (int dx = tx; dx < tile_w; dx += BLOCK_DIM_X) {
+                int gy = by + dy - radius;
+                int gx = bx + dx - radius;
+                
+                gy = max(0, min(gy, height - 1));
+                gx = max(0, min(gx, width - 1));
+                
+                smem_c[dy * tile_w + dx] = src[(gy * width + gx) * channels + c];
+            }
+        }
+    }
+    
+    __syncthreads();
+    if (x >= width || y >= height) return;
+    #pragma unroll
+    for (int c = 0; c < channels; c++) {
+        unsigned char min_val = 255;
+        unsigned char* smem_c = &smem[c * tile_w * tile_h];
+        
+        for (int ky = -radius; ky <= radius; ky++) {
+            for (int kx = -radius; kx <= radius; kx++) {
+                const int sy = (ty + radius + ky);
+                const int sx = (tx + radius + kx);
+                min_val = min(min_val, smem_c[sy * tile_w + sx]);
+            }
+        }
+        
+        dst[(y * width + x) * channels + c] = min_val;
+    }
+}
+
 __global__ void dilationKernelOptimized(
     unsigned char* src,
     unsigned char* dst,

@@ -34,7 +34,8 @@ int main(int argc, char* argv[]) {
     }
     // ./filter input.png output.png erode 2
     else if(strcmp(filter_type, "erode") == 0 && argc == 5) {
-        erosionCUDA(src, dst, atoi(argv[4]));
+        erosionCUDAoptimize(src, dst, atoi(argv[4]));
+        // erosionCUDA(src, dst, atoi(argv[4]));
     }
     // ./filter input.png output.png dilate 2
     else if(strcmp(filter_type, "dilate") == 0 && argc == 5) {

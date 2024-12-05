@@ -118,6 +118,65 @@ void embossCUDA(Image* src, Image* dst, float intensity) {
     cudaEventDestroy(stop);
 }
 
+void erosionCUDAoptimize(Image* src, Image* dst, int radius) {
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    
+    cudaEventRecord(start);
+    
+    unsigned char *d_src, *d_dst;
+    size_t size = src->width * src->height * src->channels * sizeof(unsigned char);
+    
+    cudaMalloc(&d_src, size);
+    cudaMalloc(&d_dst, size);
+    cudaMemcpy(d_src, src->data, size, cudaMemcpyHostToDevice);
+    
+    // Calculate shared memory size based on actual radius
+    const int tile_w = BLOCK_DIM_X + 2 * radius;
+    const int tile_h = BLOCK_DIM_Y + 2 * radius;
+    const size_t smem_size = tile_w * tile_h * src->channels * sizeof(unsigned char);
+    
+    // Check if shared memory size exceeds device limits
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    if (smem_size > prop.sharedMemPerBlock) {
+        printf("Error: Required shared memory (%lu bytes) exceeds device limit (%lu bytes)\n", 
+               smem_size, prop.sharedMemPerBlock);
+        return;
+    }
+    
+    dim3 block(BLOCK_DIM_X, BLOCK_DIM_Y);
+    dim3 grid(
+        (src->width + BLOCK_DIM_X - 1) / BLOCK_DIM_X,
+        (src->height + BLOCK_DIM_Y - 1) / BLOCK_DIM_Y
+    );
+    
+    // Launch kernel with dynamic shared memory size
+    erosionKernelOptimized<<<grid, block, smem_size>>>(
+        d_src,
+        d_dst,
+        src->width,
+        src->height,
+        src->channels,
+        radius
+    );
+    
+    cudaMemcpy(dst->data, d_dst, size, cudaMemcpyDeviceToHost);
+    
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+    printf("GPU time: %.4f seconds\n", milliseconds/1000.0f);
+    
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(d_src);
+    cudaFree(d_dst);
+}
+
 void erosionCUDA(Image* src, Image* dst, int radius) {
     cudaEvent_t start, stop;
     cudaEventCreate(&start);

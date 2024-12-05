@@ -4,6 +4,7 @@
 
 __global__ void gaussianKernel(unsigned char* src, unsigned char* dst, int width, int height, int channels, int radius, float sigma, float* kernel);
 __global__ void embossKernel(unsigned char* src, unsigned char* dst,int width, int height, int channels, float intensity);
+__global__ void erosionKernelOptimized(unsigned char* src, unsigned char* dst,int width, int height, int channels, int radius);
 __global__ void erosionKernel(unsigned char* src, unsigned char* dst,int width, int height, int channels, int radius);
 __global__ void dilationKernelOptimized(unsigned char* src, unsigned char* dst,int width, int height, int channels, int radius);
 __global__ void dilationKernel(unsigned char* src, unsigned char* dst,int width, int height, int channels, int radius);
