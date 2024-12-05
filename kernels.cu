@@ -54,12 +54,9 @@ __global__ void embossKernel(
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_pixels = width * height * channels;
 
-    // Cache the 3x3 kernel in shared memory
     __shared__ float sharedKernel[3][3];
     
-    // Only first thread in block initializes the kernel
     if (threadIdx.x == 0) {
-        // Initialize kernel values
         sharedKernel[0][0] = -2.0f * intensity;
         sharedKernel[0][1] = -1.0f * intensity;
         sharedKernel[0][2] = 0.0f;
@@ -79,29 +76,17 @@ __global__ void embossKernel(
     int x = xy % width;
     int y = xy / width;
     
-    // Skip border pixels
     if(x == 0 || x == width-1 || y == 0 || y == height-1) {
         dst[idx] = src[idx];
         return;
     }
     
-    // float side = -2.0f * intensity;
-    // float corner = -1.0f * intensity;
-    // float center = 1.0f;
-    // float opposite = 2.0f * intensity;
     
-    // float kernel[3][3] = {
-    //     {side, corner, 0},
-    //     {corner, center, intensity},
-    //     {0, intensity, opposite}
-    // };
-    
-    float sum = 128.0f; // Add bias to avoid negative values
+    float sum = 128.0f; 
     
     for(int ky = -1; ky <= 1; ky++) {
         for(int kx = -1; kx <= 1; kx++) {
             int src_idx = ((y + ky) * width + (x + kx)) * channels + c;
-            // sum += src[src_idx] * kernel[ky+1][kx+1];
             sum += src[src_idx] * sharedKernel[ky+1][kx+1];
         }
     }
@@ -150,14 +135,11 @@ __global__ void dilationKernelOptimized(
     int channels,
     int radius
 ) {
-    // Dynamically sized shared memory - declared externally
     extern __shared__ unsigned char smem[];
     
-    // Calculate padded tile dimensions
     const int tile_w = BLOCK_DIM_X + 2 * radius;
     const int tile_h = BLOCK_DIM_Y + 2 * radius;
     
-    // Calculate global and local indices
     const int tx = threadIdx.x;
     const int ty = threadIdx.y;
     const int bx = blockIdx.x * BLOCK_DIM_X;
@@ -165,19 +147,15 @@ __global__ void dilationKernelOptimized(
     const int x = bx + tx;
     const int y = by + ty;
     
-    // Load data into shared memory including halo region
     #pragma unroll
     for (int c = 0; c < channels; c++) {
-        // Calculate base offset for each channel in shared memory
         unsigned char* smem_c = &smem[c * tile_w * tile_h];
         
-        // Each thread loads multiple pixels to cover tile + halo
         for (int dy = ty; dy < tile_h; dy += BLOCK_DIM_Y) {
             for (int dx = tx; dx < tile_w; dx += BLOCK_DIM_X) {
                 int gy = by + dy - radius;
                 int gx = bx + dx - radius;
                 
-                // Clamp coordinates to image boundaries
                 gy = max(0, min(gy, height - 1));
                 gx = max(0, min(gx, width - 1));
                 
@@ -188,13 +166,11 @@ __global__ void dilationKernelOptimized(
     
     __syncthreads();
     if (x >= width || y >= height) return;
-    // Process only valid pixels
     #pragma unroll
     for (int c = 0; c < channels; c++) {
         unsigned char max_val = 0;
         unsigned char* smem_c = &smem[c * tile_w * tile_h];
         
-        // Use shared memory for neighborhood search
         for (int ky = -radius; ky <= radius; ky++) {
             for (int kx = -radius; kx <= radius; kx++) {
                 const int sy = (ty + radius + ky);
@@ -227,7 +203,6 @@ __global__ void dilationKernel(
 
     unsigned char max_val = 0;
                 
-    // Find maximum value in the neighborhood
     for(int ky = -radius; ky <= radius; ky++) {
         for(int kx = -radius; kx <= radius; kx++) {
             int py = min(max(y + ky, 0), height - 1);
@@ -263,7 +238,6 @@ __global__ void waveKernel(
     int sourceX = x + amplitudeX * sin(y * frequencyY);
     int sourceY = y + amplitudeY * sin(x * frequencyX);
     
-    // Bounds checking
     sourceX = max(min(sourceX, width - 1), 0);
     sourceY = max(min(sourceY, height - 1), 0);
 
@@ -281,14 +255,12 @@ __global__ void oilPaintingKernelOptimized(
     int radius,
     int intensityLevels
 ) {
-    // Dynamically sized shared memory - declared externally
+
     extern __shared__ unsigned char smem[];
     
-    // Calculate padded tile dimensions
     const int tile_w = BLOCK_DIM_X + 2 * radius;
     const int tile_h = BLOCK_DIM_Y + 2 * radius;
     
-    // Calculate global and local indices
     const int tx = threadIdx.x;
     const int ty = threadIdx.y;
     const int bx = blockIdx.x * BLOCK_DIM_X;
@@ -296,19 +268,16 @@ __global__ void oilPaintingKernelOptimized(
     const int x = bx + tx;
     const int y = by + ty;
     
-    // Load data into shared memory including halo region
     #pragma unroll
     for (int c = 0; c < channels; c++) {
-        // Calculate base offset for each channel in shared memory
+
         unsigned char* smem_c = &smem[c * tile_w * tile_h];
         
-        // Each thread loads multiple pixels to cover tile + halo
         for (int dy = ty; dy < tile_h; dy += BLOCK_DIM_Y) {
             for (int dx = tx; dx < tile_w; dx += BLOCK_DIM_X) {
                 int gy = by + dy - radius;
                 int gx = bx + dx - radius;
                 
-                // Clamp coordinates to image boundaries
                 gy = max(0, min(gy, height - 1));
                 gx = max(0, min(gx, width - 1));
                 
@@ -319,7 +288,6 @@ __global__ void oilPaintingKernelOptimized(
     
     __syncthreads();
     if (x >= width || y >= height) return;
-    // Process only valid pixels
 
     #pragma unroll
     for (int c = 0; c < channels; c++) {
