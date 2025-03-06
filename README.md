@@ -4,7 +4,7 @@ This project implements 6 different image filters with parallel acceleration usi
 
 ## Project Demo
 
-[![Image Filters Acceleration Demo](https://img.youtube.com/vi/2lXhEFKX0TE/0.jpg)](https://youtu.be/2lXhEFKX0TE)
+[![Image Filters Acceleration Demo](https://github.com/weient/PP_final/blob/main/demo.png)](https://youtu.be/2lXhEFKX0TE)
 
 Click the image above to watch the demonstration video.
 
